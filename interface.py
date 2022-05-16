@@ -8,6 +8,7 @@ import socket
 import sys
 import atexit
 import struct
+import _thread as thread
 
 # Defines data types and their sizes in bytes
 datatype_dict = {'int':'>i', \
@@ -32,41 +33,24 @@ si_prefix = {'':1.0, \
              'm':1e-3 \
             }
 
-python_major_version = sys.version_info.major
-
 class nanonisException(Exception):
     def __init__(self, message):
         super(nanonisException, self).__init__(message)
-
-if python_major_version == 2:
-    import thread
-elif python_major_version == 3:
-    import _thread as thread
-else:
-    raise nanonisException('Unknown Python version')
 
 def decode_hex_from_string(input_string):
     r'''
     Converts a ([A-Fa-f0-9]{2})* string to a sequence of bytes
     '''
-    if python_major_version == 2:
-        return input_string.decode('hex')
-    elif python_major_version == 3:
-        return bytes.fromhex(input_string)
-    else:
-        raise nanonisException('Unknown Python version')
+
+    return bytes.fromhex(input_string)
+
 
 def to_binary(datatype, input_data):
     r'''
     Converts input_data to a sequence of bytes based on the datatype
     '''
     if datatype == 'string':
-        if python_major_version == 2:
-            return bytes(input_data)
-        elif python_major_version == 3:
-            return bytes(input_data,'utf-8')
-        else:
-            raise nanonisException('Unknown Python version')
+        return bytes(input_data,'utf-8') 
     try:
         return struct.pack(datatype_dict[datatype], input_data)
     except KeyError:
@@ -77,12 +61,7 @@ def from_binary(datatype, input_data):
     Converts a sequence of bytes input_data into a Python string, int, or float
     '''
     if datatype == 'string':
-        if python_major_version == 2:
-            return input_data
-        elif python_major_version == 3:
-            return input_data.decode('utf-8')
-        else:
-            raise nanonisException('Unknown Python version')
+        return input_data.decode('utf-8')
     try:
         return struct.unpack(datatype_dict[datatype], input_data)[0]
     except KeyError:
