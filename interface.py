@@ -5,7 +5,6 @@ TCP/IP connection.
 '''
 
 import socket
-import sys
 import atexit
 import struct
 import _thread as thread
@@ -34,8 +33,9 @@ si_prefix = {'':1.0, \
             }
 
 class nanonisException(Exception):
-    def __init__(self, message):
+    def __init__(self, message, code=0):
         super(nanonisException, self).__init__(message)
+        self.code = code
 
 def decode_hex_from_string(input_string):
     r'''
@@ -446,3 +446,4 @@ class nanonis_programming_interface:
         r'''Get the value of the current (A)'''
         parsedResponse = self.parse_response(self.send('Current.Get'), 'float32')['0']
         return parsedResponse
+        
