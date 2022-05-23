@@ -61,7 +61,7 @@ def from_binary(datatype, input_data):
     Converts a sequence of bytes input_data into a Python string, int, or float
     '''
     if datatype == 'string':
-        return input_data.decode('utf-8')
+        return input_data.decode('latin1')
     try:
         return struct.unpack(datatype_dict[datatype], input_data)[0]
     except KeyError:
@@ -173,8 +173,16 @@ class nanonis_programming_interface:
         self.socket.close()
 
     def transmit(self, message):
+        '''
+        sometimes the buffer should be bigger
+        '''
         self.socket.sendall(message)
-        return self.socket.recv(1024)
+        data = self.socket.recv(1024)
+        body_size = from_binary('int', data[32:36])
+        if body_size > 1024 - 40:
+            data += self.socket.recv(body_size - 1024 + 40)
+        return data
+
 
     def send(self, command_name, *vargs):
 

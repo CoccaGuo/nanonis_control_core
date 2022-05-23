@@ -24,8 +24,7 @@ class MultiPulse(Operate):
         if (self.session.ZCtrlOnOffGet() == 0):
             self.session.ZCtrlOnOffSet()
             logging.warning('Z-control is off, turn on Z-control')
-            while not self.session.isZCtrlWork():
-                time.sleep(1)
+            self.session.WaitForZCtrlWork()
             time.sleep(3)
             return True
         elif (self.count != 0):

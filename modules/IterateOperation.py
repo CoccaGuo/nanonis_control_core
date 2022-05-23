@@ -2,7 +2,7 @@
 
 import logging
 import time
-from core import ExceptionType, Operate
+from core import ExceptionType, NanonisController, Operate
 from interface import nanonisException
 
 
@@ -11,7 +11,7 @@ class IterateOperation(Operate):
     try to iterate a area to do something point by point.
     '''
 
-    def __init__(self, session, gridX='200n', gridY='200n', padding='20n', interval_time=1):
+    def __init__(self, session: NanonisController, gridX='200n', gridY='200n', padding='20n', interval_time=1):
         super().__init__(session)
         self.gridX = self.session.try_convert(gridX)
         self.gridY = self.session.try_convert(gridY)
@@ -22,7 +22,9 @@ class IterateOperation(Operate):
         self.x_max = int((self.x_range/2 - self.padding)//self.gridX)
         self.y_max = int((self.y_range/2 - self.padding)//self.gridY)
         self.x_recorder = 0
-        self.y_recorder = 0
+        self.y_recorder = 0 # the recorder of the current point index
+        self.x = 0
+        self.y = 0 # absolute position of the current point
         self.this = 0 # the processing point index
         self.points = (min(self.x_max, self.y_max)*2 + 1) ** 2
         self.interval = interval_time
@@ -62,12 +64,17 @@ class IterateOperation(Operate):
 
     def _xy_move_and_do(self, x, y):
         if abs(x) <= self.x_max and abs(y) <= self.y_max:
+            self.x = x * self.gridX
+            self.y = y * self.gridY
             self.session.Home()
-            logging.info('Moving to ({:.2e}, {:.2e})'.format(x*self.gridX, y*self.gridY))
+            n = self.session.to_nano
+            logging.info('Moving to ({}, {})'.format(n(x*self.gridX), n(y*self.gridY)))
             self.session.TipXYSet(x*self.gridX, y*self.gridY)
             self.session.ZCtrlOnOffSet(True)
+            self.session.WaitForZCtrlWork()
             time.sleep(self.interval)
             try:
+                self.session.ZLimitCheck()
                 self._task()
             except nanonisException as e:
                 if e.code == ExceptionType.Z_HIGH_LIMIT_REACHED:

@@ -1,13 +1,35 @@
-# TipRepair.py by CoccaGuo at 2022/05/17 17:00
+# TipRepairOn2DIce.py by CoccaGuo at 2022/05/21 16:11
 
 import logging
 import time
+import numpy as np
 from core import ExceptionType, Operate
 from interface import nanonisException
-from modules.IterateOperation import IterateOperation
 from modules.BaisOperation import MultiPulse
+from modules.IterateOperation import IterateOperation
 from modules.MotorOperation import ChangeArea
 from modules.PLLOperation import CheckFrequencyShift
+from modules.ScanOperation import Scan
+from modules.TipShaper import TipShaper
+
+
+class LowerAreaFinder(Scan):
+    def __init__(self, session, center_x, center_y, width_x='150n', width_y='50n', angle=0, channel='Z (m)'):
+        super().__init__(session, center_x, center_y, width_x, width_y, angle, channel)
+
+    def _operate(self):
+        super()._operate()
+        while self.session.ScanStatusGet():
+            time.sleep(1)
+        data = self._get_scan_data()
+        x_s, y_s = np.where(data==np.min(data))
+        y_s, x_s = x_s[0], y_s[0]
+        start_x = self.center_x - self.width_x/2
+        start_y = self.center_y + self.width_y/2
+        p_x = start_x + x_s/256*self.width_x
+        p_y = start_y - y_s/256*self.width_y
+        return (p_x, p_y)
+            
 
 
 class SingleAreaTipRepairer(IterateOperation):
@@ -15,58 +37,51 @@ class SingleAreaTipRepairer(IterateOperation):
     The class handles the tip repair process on a single area.
     Includes the following steps:
      - Iterate through the area
-     - do pulses
-     - check frequency shift
+     - do tip repair
+     - check frequency shift 
+        - if frequency shift is too large, do multi pulse
+        - if frequency shift is small, do tip shaper
     '''
 
-    def __init__(self, session, gridX='200n', gridY='200n', padding='15n', interval_time=1, init_pulse=7):
+    def __init__(self, session, gridX='200n', gridY='100n', padding='15n', interval_time=1):
         super().__init__(session, gridX, gridY, padding, interval_time)
-        self.multi_pulse = MultiPulse(self.session, init_pulse)
+        self.freq = 0
 
     def _task(self):
-        if (self.this % 5 == 1 and self.multi_pulse.value > 8) or (self.this % 3 == 1 and self.multi_pulse.value > 9):
-            freq = CheckFrequencyShift(self.session).do()
-            logging.info('Frequency shift now: {:.2f}'.format(freq))
-            if CheckFrequencyShift.check_frequency_shift(freq):
-                logging.critical(
+        pos = LowerAreaFinder(self.session, self.x, self.y).do()
+        self.session.TipXYSet(pos[0], pos[1])
+        time.sleep(1)
+        self.session.ZCtrlOnOffSet(True)
+        self.session.WaitForZCtrlWork()
+        time.sleep(2)
+        
+        self.freq = CheckFrequencyShift(self.session).do()
+        logging.info('Frequency shift now: {:.2f}'.format(self.freq))
+        if CheckFrequencyShift.check_frequency_shift(self.freq):
+            logging.critical(
                     '''\n**********************************************************
                     \n\n Frequency shift now is {:.2f} ! Check if it\'s OK to use.\n\n
                        **********************************************************
-                    '''.format(freq))
-                raise nanonisException("process finished", ExceptionType.PROCESS_FINISHED)
+                    '''.format(self.freq))
+            raise nanonisException(
+                    "process finished", ExceptionType.PROCESS_FINISHED)
+        
+        if abs(self.freq) > 5:
+            MultiPulse(self.session, 10).do()
         else:
-            counts = self.multi_pulse.do()
-            logging.info('Pulse counts: {} at position ({}, {})'.format(
-                counts, self.x_recorder, self.y_recorder))
-            if counts > 3 and self.multi_pulse.value < 10:
-                self.multi_pulse.value += 1
-                logging.warn('Pulse bais set to {}'.format(
-                    self.multi_pulse.value))
+            TipShaper(self.session).do()
 
-    def _operate(self):
-        try:
-            super()._operate()
-            return self.multi_pulse.value
-        except nanonisException as e:
-            if e.code == ExceptionType.Z_TIP_TOUCHED:
-                self.session.MotorMoveSet('Z+', 5)
-                logging.error(
-                    'Z tip touched, move motor Z+ up. Goto next area.')
-                return self.multi_pulse.value
-            else:
-                raise e
 
 
 class TipRepair(Operate):
 
-    def __init__(self, session, direction='Y-', init_pulse_bias=7, area_counts=100):
+    def __init__(self, session, direction='Y-', area_counts=100):
         super().__init__(session)
         self.direction = direction
-        self.pulse_bias = init_pulse_bias
         self.area_counts = area_counts
 
     def safety_check(self):
-        logging.warn('Start Auto Tip Repairing Operation')
+        logging.warn('Start Auto Tip Repairing Operation On 2D Ice')
         logging.info('Coarse Motion direction: {}'.format(self.direction))
         self.session.Withdraw()
         logging.info('Safety check: Withdraw')
@@ -88,12 +103,11 @@ class TipRepair(Operate):
 
     def _operate(self):
         time_start = time.time()  # record the start time
-        logging.info('Start tip repairing process')
+        logging.info('Start tip repairing process.')
         count = 0
         while count < self.area_counts:
             try:
-                self.pulse_bias = SingleAreaTipRepairer(
-                    self.session, init_pulse=self.pulse_bias).do()
+                SingleAreaTipRepairer(self.session).do()
                 count += 1
                 logging.warn('Area number {} finished'.format(count))
                 ChangeArea(self.session).do()
@@ -106,13 +120,19 @@ class TipRepair(Operate):
                         'Total time cost: {}h {:2d}m {:2d}s'.format(h, m, s))
                     break
                 else:
+                    time_pass = time.time() - time_start
+                    m, s = divmod(time_pass, 60)
+                    h, m = divmod(m, 60)
+                    logging.info(
+                        'Total time cost: {}h {:2d}m {:2d}s'.format(h, m, s))
                     logging.fatal(
                         'Unexpected error: {}'.format(e))
-                    self.session.Withdraw()
-                    raise e
+                    self.session.Home()
+                    break
             except Exception as e:
                 logging.fatal(
                     'Unexpected error: {}'.format(e))
-                self.session.Withdraw()
-            finally: 
+                self.session.Home()
+                break
+            finally:
                 self.session.Home()
